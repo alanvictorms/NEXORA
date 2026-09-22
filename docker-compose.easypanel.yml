@@ -39,7 +39,7 @@ services:
       POSTGRES_USER: nexora
       POSTGRES_PWD: ${POSTGRES_PASSWORD}
       POSTGRES_SEEDS: claw3d_nexora-postgres
-      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+      SKIP_DB_CREATE: "true"
     healthcheck:
       test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health 2>/dev/null || temporal operator cluster health --address localhost:7233 2>/dev/null || (echo 'fail' && exit 1)"]
       interval: 10s
