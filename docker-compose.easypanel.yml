@@ -38,7 +38,7 @@ services:
       DB_PORT: 5432
       POSTGRES_USER: nexora
       POSTGRES_PWD: ${POSTGRES_PASSWORD}
-      POSTGRES_SEEDS: postgres
+      POSTGRES_SEEDS: claw3d_nexora-postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     networks:
       default: null
@@ -60,10 +60,10 @@ services:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"
 
-      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora
+      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@claw3d_nexora-postgres:5432/nexora
 
       WORKFLOW_BACKEND: temporal
-      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_ADDRESS: claw3d_nexora-temporal:7233
       TEMPORAL_NAMESPACE: default
 
       OPENHANDS_BASE_URL: http://claw3d_nexora-agent-server:8000
@@ -107,10 +107,10 @@ services:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"
 
-      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora
+      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@claw3d_nexora-postgres:5432/nexora
 
       WORKFLOW_BACKEND: temporal
-      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_ADDRESS: claw3d_nexora-temporal:7233
       TEMPORAL_NAMESPACE: default
 
       OPENHANDS_BASE_URL: http://claw3d_nexora-agent-server:8000
