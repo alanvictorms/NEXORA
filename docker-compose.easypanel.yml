@@ -41,11 +41,11 @@ services:
       POSTGRES_SEEDS: claw3d_nexora-postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     healthcheck:
-      test: ["CMD-SHELL", "temporal operator cluster health --address localhost:7233 || exit 1"]
+      test: ["CMD-SHELL", "tctl --address localhost:7233 cluster health 2>/dev/null || temporal operator cluster health --address localhost:7233 2>/dev/null || (echo 'fail' && exit 1)"]
       interval: 10s
       timeout: 5s
-      retries: 30
-      start_period: 40s
+      retries: 60
+      start_period: 60s
     networks:
       default: null
       easypanel:
