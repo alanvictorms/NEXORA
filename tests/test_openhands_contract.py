@@ -14,7 +14,7 @@ import httpx
 import pytest
 from app.contracts import ExecutionContextManifest, ProviderPolicy, TaskSpec
 from app.domain.models import ProviderConfig
-from app.integrations.executors import OpenHandsExecutionProvider
+from app.integrations.executors import AgentNotConfigured, OpenHandsExecutionProvider
 
 # Facts read from GET /openapi.json of agent-server 1.49.3.
 EXECUTION_STATUS_ENUM = {
@@ -29,6 +29,8 @@ EXECUTION_STATUS_ENUM = {
 }
 AUTH_HEADER = "X-Session-API-Key"
 START_REQUIRED = {"workspace"}
+# Not in `required`, but the server rejects a request carrying none of these.
+AGENT_SELECTOR_KEYS = {"agent", "agent_settings", "agent_profile_id"}
 
 
 def _context() -> ExecutionContextManifest:
@@ -61,11 +63,13 @@ def _provider(adapter: str = "openhands_native", **metadata) -> ProviderConfig:
 
 
 def test_start_payload_matches_start_conversation_request():
+    provider = _provider(agent_settings={})
     payload = OpenHandsExecutionProvider().build_start_payload(
-        _provider(), _context(), Path("/app/data/repos/proj-1/wt")
+        provider, _context(), Path("/app/data/repos/proj-1/wt")
     )
 
     assert START_REQUIRED <= set(payload)
+    assert len(AGENT_SELECTOR_KEYS & set(payload)) == 1
     assert payload["workspace"] == {
         "kind": "LocalWorkspace",
         "working_dir": "/app/data/repos/proj-1/wt",
@@ -87,10 +91,16 @@ def test_start_payload_matches_start_conversation_request():
         assert key.isalnum() and key.islower(), key
 
 
-def test_native_provider_omits_agent_until_an_llm_is_wired():
-    payload = OpenHandsExecutionProvider().build_start_payload(
-        _provider(), _context(), Path("/tmp/wt")
-    )
+def test_native_provider_fails_fast_until_an_agent_is_wired():
+    # The server requires an agent selector, so a request without one is never sent.
+    with pytest.raises(AgentNotConfigured):
+        OpenHandsExecutionProvider().build_start_payload(_provider(), _context(), Path("/tmp/wt"))
+
+
+def test_agent_profile_id_is_accepted_as_the_selector():
+    provider = _provider(agent_profile_id="11111111-2222-3333-4444-555555555555")
+    payload = OpenHandsExecutionProvider().build_start_payload(provider, _context(), Path("/tmp/wt"))
+    assert payload["agent_profile_id"]
     assert "agent" not in payload
 
 
@@ -104,10 +114,10 @@ def test_acp_agent_payload_uses_the_real_discriminator_and_required_field():
     assert agent["acp_server"] == "claude-code"
 
 
-def test_acp_without_command_falls_back_to_server_default_agent():
+def test_acp_without_command_fails_fast():
     provider = _provider("codex_acp")
-    payload = OpenHandsExecutionProvider().build_start_payload(provider, _context(), Path("/tmp/wt"))
-    assert "agent" not in payload
+    with pytest.raises(AgentNotConfigured, match="acp_command"):
+        OpenHandsExecutionProvider().build_start_payload(provider, _context(), Path("/tmp/wt"))
 
 
 def test_terminal_states_are_a_partition_of_the_published_enum():
@@ -133,8 +143,9 @@ def test_live_agent_server_still_matches_the_pinned_contract():
     assert spec["components"]["securitySchemes"]["APIKeyHeader"]["name"] == AUTH_HEADER
 
     start_props = schemas["StartConversationRequest"]["properties"]
-    for field in ("workspace", "initial_message", "agent", "max_iterations", "stuck_detection", "tags"):
+    for field in ("workspace", "initial_message", "max_iterations", "stuck_detection", "tags"):
         assert field in start_props
+    assert AGENT_SELECTOR_KEYS <= set(start_props)
 
     assert "post" in paths["/api/conversations"]
     assert "/api/conversations/{conversation_id}/interrupt" in paths

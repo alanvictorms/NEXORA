@@ -12,6 +12,10 @@ from app.contracts import ExecutionContextManifest, ExecutionResult
 from app.domain.models import ProviderConfig
 
 
+class AgentNotConfigured(RuntimeError):
+    """No agent selector available for a StartConversationRequest."""
+
+
 class CodeExecutionProvider(Protocol):
     async def execute(
         self, provider: ProviderConfig, context: ExecutionContextManifest, worktree: Path
@@ -123,26 +127,41 @@ class OpenHandsExecutionProvider:
         """Agent Server only accepts lowercase alphanumeric tag keys."""
         return "".join(ch for ch in value.lower() if ch.isalnum())
 
-    def _agent_payload(self, provider: ProviderConfig) -> dict | None:
-        """Build ``AgentBase-Input``; ``None`` lets the server resolve its default agent."""
-        agent = provider.provider_metadata.get("agent_payload")
-        if agent:
-            return dict(agent)
-        if provider.adapter not in {"claude_code_acp", "codex_acp"}:
-            # No LLM wired yet: omitting `agent` makes the server use its own default.
-            return None
-        acp_server = provider.provider_metadata.get(
-            "acp_server", "claude-code" if provider.adapter == "claude_code_acp" else "codex"
+    def _agent_selector(self, provider: ProviderConfig) -> dict:
+        """Agent Server 1.49.3 requires exactly one of these three keys.
+
+        Confirmed live: omitting all three returns
+        ``One of `agent`, `agent_settings`, or `agent_profile_id` must be provided``.
+        """
+        metadata = provider.provider_metadata
+        if metadata.get("agent_payload"):
+            return {"agent": dict(metadata["agent_payload"])}
+        if metadata.get("agent_profile_id"):
+            return {"agent_profile_id": metadata["agent_profile_id"]}
+        if metadata.get("agent_settings") is not None:
+            return {"agent_settings": dict(metadata["agent_settings"])}
+        if provider.adapter in {"claude_code_acp", "codex_acp"}:
+            acp_command = metadata.get("acp_command")
+            if not acp_command:
+                raise AgentNotConfigured(
+                    f"{provider.adapter}: defina acp_command em provider_metadata "
+                    "(obrigatório em ACPAgent-Input)"
+                )
+            agent: dict = {
+                "kind": "ACPAgent",
+                "acp_server": metadata.get(
+                    "acp_server", "claude-code" if provider.adapter == "claude_code_acp" else "codex"
+                ),
+                "acp_command": list(acp_command),
+            }
+            for key in ("acp_args", "acp_model", "acp_session_mode"):
+                if metadata.get(key) is not None:
+                    agent[key] = metadata[key]
+            return {"agent": agent}
+        raise AgentNotConfigured(
+            f"{provider.adapter}: nenhum agent configurado; defina agent_payload, "
+            "agent_settings ou agent_profile_id em provider_metadata"
         )
-        acp_command = provider.provider_metadata.get("acp_command")
-        if not acp_command:
-            # `acp_command` is required by ACPAgent-Input; without it the server would 422.
-            return None
-        payload: dict = {"kind": "ACPAgent", "acp_server": acp_server, "acp_command": list(acp_command)}
-        for key in ("acp_args", "acp_model", "acp_session_mode"):
-            if provider.provider_metadata.get(key) is not None:
-                payload[key] = provider.provider_metadata[key]
-        return payload
 
     def build_start_payload(self, provider: ProviderConfig, context, worktree: Path) -> dict:
         """``StartConversationRequest`` for ``POST /api/conversations``."""
@@ -165,9 +184,7 @@ class OpenHandsExecutionProvider:
                 self._tag_key("task_id"): context.task.id,
             },
         }
-        agent = self._agent_payload(provider)
-        if agent is not None:
-            payload["agent"] = agent
+        payload.update(self._agent_selector(provider))
         return payload
 
     async def execute(
@@ -175,7 +192,10 @@ class OpenHandsExecutionProvider:
     ) -> ExecutionResult:
         if not provider.base_url:
             return ExecutionResult(status="FAILED", error="OpenHands base_url não configurada")
-        payload = self.build_start_payload(provider, context, worktree)
+        try:
+            payload = self.build_start_payload(provider, context, worktree)
+        except AgentNotConfigured as exc:
+            return ExecutionResult(status="FAILED", error=str(exc))
         timeout = httpx.Timeout(30, read=60)
         async with httpx.AsyncClient(base_url=provider.base_url.rstrip("/"), timeout=timeout) as client:
             response = await client.post("/api/conversations", json=payload, headers=self._headers(provider))
