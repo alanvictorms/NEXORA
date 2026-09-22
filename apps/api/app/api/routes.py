@@ -81,12 +81,28 @@ async def diagnostics() -> dict:
         "APP_ENV": settings.app_env,
     }
 
+    import socket
+    temporal_host = settings.temporal_address.split(":")[0]
+    try:
+        addr = socket.getaddrinfo(temporal_host, None)[0][4][0]
+        result["temporal"] = {"dns": addr}
+    except Exception as dns_exc:
+        result["temporal"] = {"dns": f"FAILED: {dns_exc}", "address": settings.temporal_address}
+
     try:
         from temporalio.client import Client
         client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
-        result["temporal"] = {"status": "CONNECTED", "namespace": settings.temporal_namespace}
+        result["temporal"].update({"status": "CONNECTED", "namespace": settings.temporal_namespace})
     except Exception as exc:
-        result["temporal"] = {"status": "UNREACHABLE", "error": str(exc), "address": settings.temporal_address}
+        result["temporal"].update({"status": "UNREACHABLE", "error": str(exc)})
+
+    from sqlalchemy import text
+    try:
+        with SessionLocal() as sess:
+            dbs = [r[0] for r in sess.execute(text("SELECT datname FROM pg_database WHERE datname LIKE 'temporal%'"))]
+            result["temporal"]["pg_databases"] = dbs
+    except Exception:
+        pass
 
     import httpx
     try:
