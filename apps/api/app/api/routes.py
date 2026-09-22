@@ -242,21 +242,24 @@ async def run_pipeline(
         raise HTTPException(409, "Pipeline já está em execução")
     settings = get_settings()
     if settings.workflow_backend == "temporal":
-        from temporalio.client import Client
-        from worker.workflows import BuildWorkflow
+        try:
+            from temporalio.client import Client
+            from worker.workflows import BuildWorkflow
 
-        client = await Client.connect(
-            settings.temporal_address,
-            namespace=settings.temporal_namespace,
-        )
-        workflow_id = f"build-{project_id}-{uuid.uuid4()}"
-        await client.start_workflow(
-            BuildWorkflow.run,
-            project_id,
-            id=workflow_id,
-            task_queue=settings.temporal_task_queue,
-        )
-        return {"status": "accepted", "project_id": project_id, "workflow_id": workflow_id}
+            client = await Client.connect(
+                settings.temporal_address,
+                namespace=settings.temporal_namespace,
+            )
+            workflow_id = f"build-{project_id}-{uuid.uuid4()}"
+            await client.start_workflow(
+                BuildWorkflow.run,
+                project_id,
+                id=workflow_id,
+                task_queue=settings.temporal_task_queue,
+            )
+            return {"status": "accepted", "project_id": project_id, "workflow_id": workflow_id}
+        except Exception as exc:
+            raise HTTPException(502, f"Temporal unreachable ({settings.temporal_address}): {exc}") from exc
     background_tasks.add_task(_run_pipeline_background, project_id)
     return {"status": "accepted", "project_id": project_id}
 
