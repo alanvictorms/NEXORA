@@ -12,7 +12,6 @@ from pathlib import Path
 
 import httpx
 import pytest
-
 from app.contracts import ExecutionContextManifest, ProviderPolicy, TaskSpec
 from app.domain.models import ProviderConfig
 from app.integrations.executors import OpenHandsExecutionProvider
