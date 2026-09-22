@@ -7,7 +7,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git curl && rm 
 COPY pyproject.toml alembic.ini ./
 COPY apps ./apps
 COPY migrations ./migrations
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir . && pip install --no-cache-dir pytest
 RUN mkdir -p /app/data && chown -R nexora:nexora /app
 USER nexora
 ENV PYTHONPATH=/app/apps/api:/app/apps/worker
