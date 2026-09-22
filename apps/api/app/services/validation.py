@@ -92,9 +92,10 @@ class ValidationEngine:
             ),
         ]
         failed = False
+        clean_env = {k: v for k, v in __import__("os").environ.items() if k != "PYTHONPATH"}
         for gate, command, cwd in commands:
             started = time.monotonic()
-            result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=120, check=False)
+            result = subprocess.run(command, cwd=cwd, capture_output=True, text=True, timeout=120, check=False, env=clean_env)
             status = "PASSED" if result.returncode == 0 else "FAILED"
             failed = failed or result.returncode != 0
             self.db.add(
