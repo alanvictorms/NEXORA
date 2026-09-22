@@ -29,6 +29,7 @@ def seed_system(db: Session) -> tuple[Organization, User]:
             "capabilities": ["code_backend", "code_frontend", "code_test", "bootstrap"],
             "allowed_task_types": [],
             "health_status": "HEALTHY",
+            "enabled": True,
         },
         {
             "name": "OpenHands native",
@@ -40,35 +41,54 @@ def seed_system(db: Session) -> tuple[Organization, User]:
             "health_status": "UNKNOWN",
             "base_url": settings.openhands_base_url,
             "auth_mode": "session_api_key",
+            "enabled": True,
+            "provider_metadata": {},
         },
         {
             "name": "Claude Code ACP",
             "kind": "code_executor",
             "adapter": "claude_code_acp",
             "priority": 30,
-            "capabilities": ["code_backend", "code_frontend", "code_test"],
+            "capabilities": ["code_backend", "code_frontend", "code_test", "bootstrap"],
             "allowed_task_types": [],
             "health_status": "UNKNOWN",
             "base_url": settings.openhands_base_url,
             "auth_mode": "secret_ref",
-            "provider_metadata": {"acp_server": "claude-code"},
+            "enabled": True,
+            "provider_metadata": {
+                "acp_server": "claude-code",
+                "acp_command": ["claude", "--acp"],
+            },
         },
         {
             "name": "Codex ACP",
             "kind": "code_executor",
             "adapter": "codex_acp",
             "priority": 40,
-            "capabilities": ["code_backend", "code_frontend", "code_test"],
+            "capabilities": ["code_backend", "code_frontend", "code_test", "bootstrap"],
             "allowed_task_types": [],
             "health_status": "UNKNOWN",
             "base_url": settings.openhands_base_url,
             "auth_mode": "secret_ref",
-            "provider_metadata": {"acp_server": "codex"},
+            "enabled": True,
+            "provider_metadata": {
+                "acp_server": "codex",
+                "acp_command": ["codex", "--acp"],
+            },
         },
     ]
+
+    reconcile_keys = [
+        "capabilities", "priority", "base_url", "auth_mode",
+        "provider_metadata", "enabled", "health_status",
+    ]
     for item in defaults:
-        if not db.scalar(select(ProviderConfig).where(ProviderConfig.name == item["name"])):
+        existing = db.scalar(select(ProviderConfig).where(ProviderConfig.name == item["name"]))
+        if existing:
+            for key in reconcile_keys:
+                if key in item:
+                    setattr(existing, key, item[key])
+        else:
             db.add(ProviderConfig(**item))
     db.commit()
     return org, user
-

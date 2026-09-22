@@ -64,6 +64,58 @@ def health() -> dict:
     return {"status": "ok", "service": "nexora-control-plane"}
 
 
+@router.get("/diag")
+async def diagnostics() -> dict:
+    """Read-only infrastructure diagnostics for remote debugging."""
+    import os
+    import subprocess
+
+    settings = get_settings()
+    result: dict = {"temporal": {}, "agent_server": {}, "filesystem": {}, "env": {}}
+
+    result["env"] = {
+        "WORKFLOW_BACKEND": settings.workflow_backend,
+        "TEMPORAL_ADDRESS": settings.temporal_address,
+        "OPENHANDS_BASE_URL": settings.openhands_base_url,
+        "DATABASE_URL": settings.database_url.split("@")[-1] if "@" in settings.database_url else "sqlite",
+        "APP_ENV": settings.app_env,
+    }
+
+    try:
+        from temporalio.client import Client
+        client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
+        result["temporal"] = {"status": "CONNECTED", "namespace": settings.temporal_namespace}
+    except Exception as exc:
+        result["temporal"] = {"status": "UNREACHABLE", "error": str(exc), "address": settings.temporal_address}
+
+    import httpx
+    try:
+        async with httpx.AsyncClient(timeout=5) as c:
+            for ep in ("/health", "/alive"):
+                r = await c.get(f"{settings.openhands_base_url.rstrip('/')}{ep}")
+                if r.status_code < 500:
+                    result["agent_server"] = {"status": "REACHABLE", "endpoint": ep, "code": r.status_code}
+                    break
+            else:
+                result["agent_server"] = {"status": "UNHEALTHY"}
+    except Exception as exc:
+        result["agent_server"] = {"status": "UNREACHABLE", "error": str(exc)}
+
+    data_path = Path("/app/data")
+    result["filesystem"] = {
+        "data_exists": data_path.exists(),
+        "data_contents": sorted(os.listdir(data_path)) if data_path.exists() else [],
+    }
+    try:
+        mount_info = subprocess.run(["findmnt", "-n", "-o", "SOURCE,TARGET", "/app/data"],
+                                    capture_output=True, text=True, timeout=3)
+        result["filesystem"]["mount"] = mount_info.stdout.strip() if mount_info.returncode == 0 else "N/A"
+    except Exception:
+        result["filesystem"]["mount"] = "N/A"
+
+    return result
+
+
 @router.post("/projects", status_code=201)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)) -> dict:
     org, user = seed_system(db)

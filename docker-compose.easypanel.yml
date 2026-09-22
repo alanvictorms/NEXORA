@@ -40,6 +40,12 @@ services:
       POSTGRES_PWD: ${POSTGRES_PASSWORD}
       POSTGRES_SEEDS: claw3d_nexora-postgres
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    healthcheck:
+      test: ["CMD-SHELL", "temporal operator cluster health --address localhost:7233 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
     networks:
       default: null
       easypanel:
@@ -55,7 +61,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"
@@ -102,7 +108,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_started
+        condition: service_healthy
     environment:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"
@@ -153,6 +159,7 @@ services:
 volumes:
   postgres_data:
   project_data:
+    name: nexora-project-data
 
 networks:
   easypanel:

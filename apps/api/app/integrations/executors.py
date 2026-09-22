@@ -144,8 +144,8 @@ class OpenHandsExecutionProvider:
             acp_command = metadata.get("acp_command")
             if not acp_command:
                 raise AgentNotConfigured(
-                    f"{provider.adapter}: defina acp_command em provider_metadata "
-                    "(obrigatório em ACPAgent-Input)"
+                    f"{provider.adapter}: acp_command ausente em provider_metadata. "
+                    "Reconcilie os providers (reinicie a API) ou defina manualmente."
                 )
             agent: dict = {
                 "kind": "ACPAgent",
