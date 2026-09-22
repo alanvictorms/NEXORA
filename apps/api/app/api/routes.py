@@ -15,8 +15,11 @@ from app.core.config import get_settings
 from app.core.database import SessionLocal, get_db
 from app.domain.models import (
     ArchitectureSpecVersion,
+    Artifact,
+    AuditLog,
     Conversation,
     DesignSpecVersion,
+    Execution,
     ExecutionEvent,
     Message,
     PreviewSession,
@@ -25,8 +28,12 @@ from app.domain.models import (
     ProjectSpecVersion,
     ProviderConfig,
     Question,
+    SecretMetadata,
     Task,
+    TaskDependency,
     TaskGraph,
+    ValidationResult,
+    ValidationRun,
 )
 from app.services.bootstrap import seed_system
 from app.services.common import slugify
@@ -330,6 +337,29 @@ async def run_pipeline(
             raise HTTPException(502, f"Temporal unreachable ({settings.temporal_address}): {exc}") from exc
     background_tasks.add_task(_run_pipeline_background, project_id)
     return {"status": "accepted", "project_id": project_id}
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: str, db: Session = Depends(get_db)) -> None:
+    from sqlalchemy import delete as sql_delete, select as sql_select
+    project = project_or_404(db, project_id)
+    # FK children without project_id
+    db.execute(sql_delete(ValidationResult).where(
+        ValidationResult.validation_run_id.in_(sql_select(ValidationRun.id).where(ValidationRun.project_id == project_id))))
+    db.execute(sql_delete(Message).where(
+        Message.conversation_id.in_(sql_select(Conversation.id).where(Conversation.project_id == project_id))))
+    db.execute(sql_delete(TaskDependency).where(
+        TaskDependency.task_id.in_(sql_select(Task.id).where(
+            Task.task_graph_id.in_(sql_select(TaskGraph.id).where(TaskGraph.project_id == project_id))))))
+    db.execute(sql_delete(Task).where(
+        Task.task_graph_id.in_(sql_select(TaskGraph.id).where(TaskGraph.project_id == project_id))))
+    # FK children with project_id — order: children before parents
+    for model in (PreviewSession, Artifact, ExecutionEvent, ValidationRun, Execution,
+                  TaskGraph, ProductionPlan, DesignSpecVersion, ArchitectureSpecVersion,
+                  ProjectSpecVersion, Question, Conversation, SecretMetadata, AuditLog):
+        db.execute(sql_delete(model).where(model.project_id == project_id))
+    db.delete(project)
+    db.commit()
 
 
 @router.get("/projects/{project_id}/events")

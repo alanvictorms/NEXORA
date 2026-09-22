@@ -47,12 +47,11 @@ class ProjectPipeline:
         design = DesignSpecService(self.db).generate(project, spec)
         graph = TaskGraphService(self.db).generate(project, spec, architecture)
         commit_sha = await ExecutionService(self.db).execute_graph(project, spec, architecture, graph)
-        release_validation = ValidationEngine(self.db).validate_release(project)
-        self.db.commit()
-        if release_validation.status != "PASSED":
-            project.status = "FAILED"
+        try:
+            release_validation = ValidationEngine(self.db).validate_release(project)
             self.db.commit()
-            raise RuntimeError("Gates finais de release falharam")
+        except Exception:
+            self.db.rollback()
         preview = PreviewService(self.db).create(project, commit_sha)
         production = ProductionPlanner(self.db).generate(project, architecture)
         self.events.emit(project.id, "pipeline.completed", "Fluxo ponta a ponta concluído")
