@@ -1,0 +1,153 @@
+# Produção / validação na VPS (EasyPanel).
+# O OpenHands Agent Server NÃO faz parte deste compose: ele já roda como o
+# serviço EasyPanel `nexora-agent-server` e é alcançado pela rede externa
+# `easypanel` em http://claw3d_nexora-agent-server:8000
+#
+# Somente `web` é público (porta interna 80); ele faz proxy de /api para api:8000.
+# Nenhum serviço publica porta no host: o roteamento é do EasyPanel.
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: nexora
+      POSTGRES_USER: nexora
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexora -d nexora"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      default: null
+
+  temporal:
+    image: temporalio/auto-setup:1.28.1
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: 5432
+      POSTGRES_USER: nexora
+      POSTGRES_PWD: ${POSTGRES_PASSWORD}
+      POSTGRES_SEEDS: postgres
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    networks:
+      default: null
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      APP_ENV: production
+      AUTO_CREATE_SCHEMA: "false"
+
+      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora
+
+      WORKFLOW_BACKEND: temporal
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+
+      OPENHANDS_BASE_URL: http://claw3d_nexora-agent-server:8000
+      OPENHANDS_API_KEY: ${OPENHANDS_API_KEY}
+
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY}
+
+      REPOSITORY_ROOT: /app/data/repos
+      ARTIFACT_ROOT: /app/data/artifacts
+
+      PREVIEW_IDLE_TIMEOUT_SECONDS: "1800"
+      PREVIEW_RETENTION_DAYS: "7"
+      MAX_ACTIVE_PREVIEWS_PER_PROJECT: "1"
+
+      PREVIEW_BASE_URL: ${PREVIEW_BASE_URL}
+      CORS_ORIGINS: ${CORS_ORIGINS}
+    command:
+      - sh
+      - -c
+      - alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000
+    volumes:
+      - project_data:/app/data
+    networks:
+      default: null
+      easypanel:
+        aliases:
+          - claw3d_nexora-api
+          - claw3d_nexora-api-api
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      temporal:
+        condition: service_started
+    environment:
+      APP_ENV: production
+      AUTO_CREATE_SCHEMA: "false"
+
+      DATABASE_URL: postgresql+psycopg://nexora:${POSTGRES_PASSWORD}@postgres:5432/nexora
+
+      WORKFLOW_BACKEND: temporal
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_NAMESPACE: default
+
+      OPENHANDS_BASE_URL: http://claw3d_nexora-agent-server:8000
+      OPENHANDS_API_KEY: ${OPENHANDS_API_KEY}
+
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY}
+
+      REPOSITORY_ROOT: /app/data/repos
+      ARTIFACT_ROOT: /app/data/artifacts
+
+      PREVIEW_IDLE_TIMEOUT_SECONDS: "1800"
+      PREVIEW_RETENTION_DAYS: "7"
+      MAX_ACTIVE_PREVIEWS_PER_PROJECT: "1"
+
+      PREVIEW_BASE_URL: ${PREVIEW_BASE_URL}
+    command: ["python", "-m", "worker.main"]
+    volumes:
+      - project_data:/app/data
+    networks:
+      default: null
+      easypanel:
+        aliases:
+          - claw3d_nexora-worker
+          - claw3d_nexora-worker-worker
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - api
+    networks:
+      default: null
+      easypanel:
+        aliases:
+          - claw3d_nexora-web
+          - claw3d_nexora-web-web
+
+volumes:
+  postgres_data:
+  project_data:
+
+networks:
+  easypanel:
+    external: true

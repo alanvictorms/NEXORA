@@ -98,11 +98,16 @@ class LocalExecutionProvider:
 
 
 class OpenHandsExecutionProvider:
-    """REST adapter for the canonical OpenHands Agent Server contract.
+    """REST adapter for the OpenHands Agent Server contract (validated against 1.49.3).
 
     Agent payload remains provider metadata because native/ACP schemas evolve independently
     from NEXORA. The server is always below our deterministic orchestration layer.
     """
+
+    #: ``ConversationExecutionStatus`` as published by the Agent Server OpenAPI.
+    SUCCESS_STATES = frozenset({"finished"})
+    FAILURE_STATES = frozenset({"error", "stuck", "paused", "deleting"})
+    PENDING_STATES = frozenset({"idle", "running", "waiting_for_confirmation"})
 
     def __init__(self, api_key: str | None = None):
         self.api_key = api_key
@@ -113,30 +118,64 @@ class OpenHandsExecutionProvider:
         header = provider.provider_metadata.get("auth_header", "X-Session-API-Key")
         return {header: self.api_key}
 
+    @staticmethod
+    def _tag_key(value: str) -> str:
+        """Agent Server only accepts lowercase alphanumeric tag keys."""
+        return "".join(ch for ch in value.lower() if ch.isalnum())
+
+    def _agent_payload(self, provider: ProviderConfig) -> dict | None:
+        """Build ``AgentBase-Input``; ``None`` lets the server resolve its default agent."""
+        agent = provider.provider_metadata.get("agent_payload")
+        if agent:
+            return dict(agent)
+        if provider.adapter not in {"claude_code_acp", "codex_acp"}:
+            # No LLM wired yet: omitting `agent` makes the server use its own default.
+            return None
+        acp_server = provider.provider_metadata.get(
+            "acp_server", "claude-code" if provider.adapter == "claude_code_acp" else "codex"
+        )
+        acp_command = provider.provider_metadata.get("acp_command")
+        if not acp_command:
+            # `acp_command` is required by ACPAgent-Input; without it the server would 422.
+            return None
+        payload: dict = {"kind": "ACPAgent", "acp_server": acp_server, "acp_command": list(acp_command)}
+        for key in ("acp_args", "acp_model", "acp_session_mode"):
+            if provider.provider_metadata.get(key) is not None:
+                payload[key] = provider.provider_metadata[key]
+        return payload
+
+    def build_start_payload(self, provider: ProviderConfig, context, worktree: Path) -> dict:
+        """``StartConversationRequest`` for ``POST /api/conversations``."""
+        payload: dict = {
+            "workspace": {"kind": "LocalWorkspace", "working_dir": str(worktree)},
+            "initial_message": {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(context.model_dump(mode="json"), ensure_ascii=False),
+                    }
+                ],
+                "run": True,
+            },
+            "max_iterations": provider.provider_metadata.get("max_iterations", 100),
+            "stuck_detection": True,
+            "tags": {
+                "orchestrator": "nexora",
+                self._tag_key("task_id"): context.task.id,
+            },
+        }
+        agent = self._agent_payload(provider)
+        if agent is not None:
+            payload["agent"] = agent
+        return payload
+
     async def execute(
         self, provider: ProviderConfig, context: ExecutionContextManifest, worktree: Path
     ) -> ExecutionResult:
         if not provider.base_url:
             return ExecutionResult(status="FAILED", error="OpenHands base_url não configurada")
-        agent = provider.provider_metadata.get("agent_payload")
-        if not agent:
-            if provider.adapter in {"claude_code_acp", "codex_acp"}:
-                agent = {
-                    "kind": "acp",
-                    "acp_server": provider.provider_metadata.get(
-                        "acp_server", "claude-code" if provider.adapter == "claude_code_acp" else "codex"
-                    ),
-                }
-            else:
-                agent = {"kind": "openhands"}
-        payload = {
-            "agent": agent,
-            "initial_message": json.dumps(context.model_dump(mode="json"), ensure_ascii=False),
-            "max_iterations": provider.provider_metadata.get("max_iterations", 100),
-            "stuck_detection": True,
-            "workspace": {"working_dir": str(worktree)},
-            "tags": {"orchestrator": "nexora", "task_id": context.task.id},
-        }
+        payload = self.build_start_payload(provider, context, worktree)
         timeout = httpx.Timeout(30, read=60)
         async with httpx.AsyncClient(base_url=provider.base_url.rstrip("/"), timeout=timeout) as client:
             response = await client.post("/api/conversations", json=payload, headers=self._headers(provider))
@@ -146,7 +185,7 @@ class OpenHandsExecutionProvider:
             if not conversation_id:
                 return ExecutionResult(status="FAILED", error="Agent Server não retornou conversation id")
             deadline = time.monotonic() + context.task.timeout_seconds
-            final_info = info
+            seen_running = False
             while time.monotonic() < deadline:
                 await asyncio.sleep(1)
                 state = await client.get(
@@ -155,11 +194,15 @@ class OpenHandsExecutionProvider:
                 state.raise_for_status()
                 final_info = state.json()
                 status = str(final_info.get("execution_status", "")).lower()
-                if status in {"finished", "completed", "idle", "stopped", "error", "failed"}:
-                    if status in {"error", "failed"}:
-                        return ExecutionResult(
-                            status="FAILED", external_execution_id=conversation_id, error=f"OpenHands: {status}"
-                        )
+                if status == "running":
+                    # `idle` is also the *initial* status, so it only means "done" after a run.
+                    seen_running = True
+                    continue
+                if status in self.FAILURE_STATES:
+                    return ExecutionResult(
+                        status="FAILED", external_execution_id=conversation_id, error=f"OpenHands: {status}"
+                    )
+                if status in self.SUCCESS_STATES or (status == "idle" and seen_running):
                     return ExecutionResult(
                         status="SUCCEEDED",
                         external_execution_id=conversation_id,
@@ -172,15 +215,22 @@ class OpenHandsExecutionProvider:
         if not provider.base_url:
             return
         async with httpx.AsyncClient(base_url=provider.base_url.rstrip("/"), timeout=15) as client:
-            await client.post(
-                f"/api/conversations/{external_execution_id}/stop", headers=self._headers(provider)
+            headers = self._headers(provider)
+            # 1.49.3 has no `/stop`: `/interrupt` cancels the in-flight LLM call,
+            # `/pause` is the graceful variant kept as fallback.
+            response = await client.post(
+                f"/api/conversations/{external_execution_id}/interrupt", headers=headers
             )
+            if response.status_code == 404:
+                await client.post(
+                    f"/api/conversations/{external_execution_id}/pause", headers=headers
+                )
 
     async def health(self, provider: ProviderConfig) -> str:
         if not provider.base_url:
             return "UNHEALTHY"
         async with httpx.AsyncClient(base_url=provider.base_url.rstrip("/"), timeout=5) as client:
-            for endpoint in ("/health", "/api/health", "/api/conversations?limit=1"):
+            for endpoint in ("/health", "/alive", "/server_info"):
                 try:
                     response = await client.get(endpoint, headers=self._headers(provider))
                     if response.status_code < 500:
@@ -188,4 +238,3 @@ class OpenHandsExecutionProvider:
                 except httpx.HTTPError:
                     continue
         return "UNHEALTHY"
-
