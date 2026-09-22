@@ -23,6 +23,9 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       default: null
+      easypanel:
+        aliases:
+          - claw3d_nexora-postgres
 
   temporal:
     image: temporalio/auto-setup:1.28.1
@@ -39,6 +42,9 @@ services:
       DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
     networks:
       default: null
+      easypanel:
+        aliases:
+          - claw3d_nexora-temporal
 
   api:
     build:
