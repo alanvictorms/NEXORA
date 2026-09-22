@@ -61,7 +61,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_healthy
+        condition: service_started
     environment:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"
@@ -108,7 +108,7 @@ services:
       postgres:
         condition: service_healthy
       temporal:
-        condition: service_healthy
+        condition: service_started
     environment:
       APP_ENV: production
       AUTO_CREATE_SCHEMA: "false"

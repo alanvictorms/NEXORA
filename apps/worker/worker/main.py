@@ -19,7 +19,14 @@ from worker.workflows import (
 
 async def main() -> None:
     settings = get_settings()
-    client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
+    for attempt in range(60):
+        try:
+            client = await Client.connect(settings.temporal_address, namespace=settings.temporal_namespace)
+            break
+        except Exception:
+            if attempt == 59:
+                raise
+            await asyncio.sleep(5)
     worker = Worker(
         client,
         task_queue=settings.temporal_task_queue,
