@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexora.local/schemas/task-spec-v1.json",
+  "title": "TaskSpec",
+  "type": "object",
+  "required": [
+    "id", "project_id", "spec_version_id", "architecture_version_id", "task_type",
+    "objective", "dependencies", "context_refs", "allowed_paths", "forbidden_paths",
+    "acceptance_criteria", "commands_to_validate", "provider_policy", "timeout_seconds",
+    "max_attempts", "retry_policy", "expected_artifacts"
+  ],
+  "properties": {
+    "id": {"type": "string"},
+    "project_id": {"type": "string"},
+    "task_type": {"type": "string"},
+    "objective": {"type": "string"},
+    "dependencies": {"type": "array", "items": {"type": "string"}},
+    "context_refs": {"type": "array", "items": {"type": "string"}},
+    "allowed_paths": {"type": "array", "items": {"type": "string"}},
+    "forbidden_paths": {"type": "array", "items": {"type": "string"}},
+    "acceptance_criteria": {"type": "array", "items": {"type": "string"}},
+    "commands_to_validate": {"type": "array", "items": {"type": "string"}},
+    "expected_artifacts": {"type": "array", "items": {"type": "object"}},
+    "provider_policy": {"type": "object", "required": ["capability", "allow_fallback"]},
+    "timeout_seconds": {"type": "integer", "minimum": 1},
+    "max_attempts": {"type": "integer", "minimum": 1},
+    "retry_policy": {"type": "object"}
+  }
+}

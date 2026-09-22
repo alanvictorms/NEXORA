@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nexora.local/schemas/project-spec-v1.json",
+  "title": "ProjectSpec",
+  "type": "object",
+  "required": ["schema_version", "project"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "project": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "problem": {"type": "string"},
+        "target_users": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "modules": {"type": "array", "items": {"type": "object"}},
+    "functional_requirements": {"type": "array", "items": {"type": "object"}},
+    "identity": {"type": "object"},
+    "integrations": {"type": "array", "items": {"type": "object"}},
+    "design": {"type": "object"},
+    "production_requirements": {"type": "object"}
+  }
+}
